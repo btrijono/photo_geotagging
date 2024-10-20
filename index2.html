@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Peta Geotagging</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map {
+            height: 500px;
+            width: 100%;
+        }
+        .circle-image {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Peta Geotagging</h1>
+    <input type="file" id="imageUpload" accept="image/*" />
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
+    <script>
+        // Inisialisasi peta
+        const map = L.map('map').setView([3.8, 117.4], 12);
+
+        // Menambahkan layer OpenStreetMap
+        L.tileLayer('http://gis.julongindonesia.com:8087/jlg_mau/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Fungsi untuk mengunggah dan membaca gambar
+        document.getElementById('imageUpload').addEventListener('change', function (event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = function () {
+                        EXIF.getData(img, function () {
+                            const lat = EXIF.getTag(this, "GPSLatitude");
+                            const latRef = EXIF.getTag(this, "GPSLatitudeRef");
+                            const lon = EXIF.getTag(this, "GPSLongitude");
+                            const lonRef = EXIF.getTag(this, "GPSLongitudeRef");
+
+                            if (lat && lon) {
+                                // Konversi Latitude dan Longitude dari DMS ke desimal
+                                const latitude = convertDMSToDecimal(lat, latRef);
+                                const longitude = convertDMSToDecimal(lon, lonRef);
+
+                                // Tambahkan marker ke peta
+                                const marker = L.marker([latitude, longitude]).addTo(map);
+
+                                // Menambahkan popup dengan gambar yang bisa diklik
+                                marker.bindPopup(`
+                                    <div>
+                                        <p><strong>${file.name}</strong></p>
+                                        <a href="${e.target.result}" target="_blank">
+                                            <img src="${e.target.result}" alt="${file.name}" class="circle-image">
+                                        </a>
+                                    </div>
+                                `).openPopup();
+
+                                map.setView([latitude, longitude], 10);
+
+                                // Mengunggah gambar ke server menggunakan AJAX
+                                uploadImage(file);
+                            } else {
+                                alert('Gambar tidak memiliki informasi geotagging.');
+                            }
+                        });
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Fungsi untuk mengonversi DMS ke desimal
+        function convertDMSToDecimal(dms, ref) {
+            const degrees = dms[0] + (dms[1] / 60) + (dms[2] / 3600);
+            return (ref === "S" || ref === "W") ? -degrees : degrees;
+        }
+
+        // Fungsi untuk mengunggah gambar ke server menggunakan AJAX
+        function uploadImage(file) {
+            const formData = new FormData();
+            formData.append('image', file);
+
+            fetch('upload.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log('Gambar berhasil diunggah:', data);
+            })
+            .catch(error => {
+                console.error('Terjadi kesalahan saat mengunggah gambar:', error);
+            });
+        }
+    </script>
+
+</body>
+</html>

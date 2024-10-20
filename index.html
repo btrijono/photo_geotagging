@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Geotagging</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="manifest" href="/manifest.json">
+    <style>
+        #map {
+            height: 980px; /* Tinggi harus diatur */
+            width: 100%;   /* Lebar harus diatur */
+        }
+        .circle-image {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+<script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(() => console.log('Service Worker registered'))
+            .catch(err => console.log('Service Worker registration failed:', err));
+    }
+</script>
+
+<h1>Photo Geotagging</h1>
+<input type="file" id="imageUpload" accept="image/*" />
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
+<script>
+    // Inisialisasi peta
+    const map = L.map('map').setView([3.7, 117.6], 12); // Koordinat awal
+
+    // Menambahkan layer OpenStreetMap
+    L.tileLayer('http://gis.julongindonesia.com:8082/jlg2023/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Fungsi untuk mendapatkan lokasi pengguna
+    function getLocation() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(showPosition, showError);
+        } else {
+            alert("Geolocation is not supported by this browser.");
+        }
+    }
+
+    function showPosition(position) {
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
+
+        // Tambahkan marker ke peta
+        L.marker([latitude, longitude]).addTo(map)
+            .bindPopup("You are here!")
+            .openPopup();
+
+        map.setView([latitude, longitude], 10);
+    }
+
+    function showError(error) {
+        switch(error.code) {
+            case error.PERMISSION_DENIED:
+                alert("User denied the request for Geolocation.");
+                break;
+            case error.POSITION_UNAVAILABLE:
+                alert("Location information is unavailable.");
+                break;
+            case error.TIMEOUT:
+                alert("The request to get user location timed out.");
+                break;
+            case error.UNKNOWN_ERROR:
+                alert("An unknown error occurred.");
+                break;
+        }
+    }
+
+    // Memanggil fungsi untuk mendapatkan lokasi pengguna
+    getLocation();
+
+    // Fungsi untuk mengunggah dan membaca gambar
+    document.getElementById('imageUpload').addEventListener('change', function (event) {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = function () {
+                    EXIF.getData(img, function () {
+                        const lat = EXIF.getTag(this, "GPSLatitude");
+                        const latRef = EXIF.getTag(this, "GPSLatitudeRef");
+                        const lon = EXIF.getTag(this, "GPSLongitude");
+                        const lonRef = EXIF.getTag(this, "GPSLongitudeRef");
+
+                        if (lat && lon) {
+                            // Konversi Latitude dan Longitude dari DMS ke desimal
+                            const latitude = convertDMSToDecimal(lat, latRef);
+                            const longitude = convertDMSToDecimal(lon, lonRef);
+
+                            // Tambahkan marker ke peta
+                            const marker = L.marker([latitude, longitude]).addTo(map);
+                            marker.bindPopup(`
+                                <div>
+                                    <p><strong>${file.name}</strong></p>
+                                    <a href="${e.target.result}" target="_blank">
+                                        <img src="${e.target.result}" alt="${file.name}" class="circle-image">
+                                    </a>
+                                </div>
+                            `).openPopup();
+
+                            map.setView([latitude, longitude], 10);
+
+                            // Mengunggah gambar ke server menggunakan AJAX
+                            uploadImage(file, latitude, longitude);
+                        } else {
+                            alert('Gambar tidak memiliki informasi geotagging.');
+                        }
+                    });
+                };
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Fungsi untuk mengonversi DMS ke desimal
+    function convertDMSToDecimal(dms, ref) {
+        const degrees = dms[0] + (dms[1] / 60) + (dms[2] / 3600);
+        return (ref === "S" || ref === "W") ? -degrees : degrees;
+    }
+
+    // Fungsi untuk mengunggah gambar ke server menggunakan AJAX
+    function uploadImage(file, latitude, longitude) {
+        const formData = new FormData();
+        formData.append('image', file);
+        formData.append('latitude', latitude);
+        formData.append('longitude', longitude);
+
+        fetch('upload.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.text())
+        .then(data => {
+            console.log('Gambar berhasil diunggah:', data);
+        })
+        .catch(error => {
+            console.error('Terjadi kesalahan saat mengunggah gambar:', error);
+        });
+    }
+
+    // Mengambil data gambar dari server saat halaman dimuat
+    fetch('get_images.php')
+        .then(response => response.json())
+        .then(images => {
+            images.forEach(image => {
+                const { file_name, latitude, longitude } = image;
+
+                // Tambahkan marker ke peta
+                const marker = L.marker([latitude, longitude]).addTo(map);
+                marker.bindPopup(`
+                    <div>
+                        <p><strong>${file_name}</strong></p>
+                        <a href="uploads/${file_name}" target="_blank">
+                            <img src="uploads/${file_name}" alt="${file_name}" class="circle-image">
+                        </a>
+                    </div>
+                `);
+            });
+        })
+        .catch(error => {
+            console.error('Terjadi kesalahan saat mengambil data gambar:', error);
+        });
+</script>
+</body>
+</html>
